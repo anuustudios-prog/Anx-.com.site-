@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isClient() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'client';
+    }
+    match /users/{uid} {
+      allow create: if signedIn() && request.auth.uid == uid &&
+        request.resource.data.uid == uid && request.resource.data.role == 'client';
+      allow read: if signedIn() && request.auth.uid == uid || isAdmin();
+      allow update: if signedIn() && request.auth.uid == uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.email == resource.data.email;
+      allow delete: if isAdmin();
+    }
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid || isAdmin();
+      allow write: if false; // Provision admin role documents using trusted Admin SDK only.
+    }
+    match /editors/{editorDoc} {
+      allow read: if isAdmin();
+      allow write: if false; // Provision editors server-side; never store passwords here.
+    }
+    match /orders/{orderId} {
+      allow create: if isClient() &&
+        request.resource.data.clientUid == request.auth.uid &&
+        request.resource.data.clientEmail == request.auth.token.email &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.assignedTo == null;
+      allow read: if isAdmin() ||
+        (signedIn() && resource.data.clientUid == request.auth.uid) ||
+        (signedIn() && resource.data.assignedTo == request.auth.token.editorId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    match /my_tools/{toolId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
